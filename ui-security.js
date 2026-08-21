@@ -1,161 +1,185 @@
-/* DataSaathi client-side security and UI bindings. */
+/* DataSaathi client-side security boundary and resilient control binding. */
 (() => {
   'use strict';
+
   const MAX_URL = 2048;
   const MAX_POLICY = 1000000;
   const $ = id => document.getElementById(id);
-  const buttons = (key, root = document) => [...root.querySelectorAll(`[data-i18n="${key}"]`)];
   const saved = { citizen: { url: '', text: '' }, company: { url: '', text: '' } };
 
-  const publicUrl = raw => {
+  const t = (key, fallback) => {
+    try {
+      const lang = $('language')?.value || 'en';
+      return (window.T && window.T[lang] && window.T[lang][key]) || fallback;
+    } catch (_) { return fallback; }
+  };
+
+  function publicUrl(raw) {
     const value = String(raw || '').replace(/[\u0000-\u001F\u007F]/g, '').trim();
-    if (!value || value.length > MAX_URL) throw new Error('Invalid or oversized URL.');
+    if (!value || value.length > MAX_URL) throw new Error(t('validUrl', 'Please enter a valid HTTP/HTTPS URL.'));
     let u;
-    try { u = new URL(value); } catch (_) { throw new Error('Invalid URL.'); }
+    try { u = new URL(value); } catch (_) { throw new Error(t('validUrl', 'Please enter a valid HTTP/HTTPS URL.')); }
     if (!['http:', 'https:'].includes(u.protocol)) throw new Error('Only HTTP and HTTPS URLs are allowed.');
     if (u.username || u.password) throw new Error('URLs containing embedded credentials are not allowed.');
     if (u.port && !['80', '443'].includes(u.port)) throw new Error('Only standard web ports are allowed.');
     const host = u.hostname.toLowerCase();
-    if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) throw new Error('Local, internal or IP-address URLs are not supported.');
+    if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+      throw new Error('Local, internal or IP-address URLs are not supported.');
+    }
     return u.href;
-  };
+  }
 
-  const sanitizeText = value => String(value || '').replace(/[\u0000-\u001F\u007F]/g, ' ').slice(0, MAX_POLICY);
-
-  // The localization code can replace label contents. Inputs must never be
-  // children of a node whose innerHTML is translated. Keep the controls in
-  // dedicated wrappers and recreate them if an older cached script removes them.
-  function ensureFields(mode) {
-    const tool = $('#' + mode + '-tool');
-    if (!tool) return;
-
-    let url = $(mode + 'Url');
-    let text = $(mode + 'Text');
-
-    if (!url) {
-      const row = document.createElement('div');
-      row.className = 'security-control';
-      const label = document.createElement('label');
-      const labelText = document.createElement('span');
-      labelText.textContent = mode === 'citizen' ? 'Privacy Policy URL' : 'Privacy Policy URL';
-      url = document.createElement('input');
-      url.id = mode + 'Url'; url.type = 'url'; url.className = 'input';
-      url.placeholder = 'https://example.com/privacy'; url.autocomplete = 'off';
-      label.append(labelText, url); row.appendChild(label);
-
-      const oldLabels = tool.querySelectorAll('label[data-i18n="urlLabel"]');
-      if (oldLabels.length) oldLabels[0].replaceWith(row);
-      else {
-        const heading = tool.querySelector('h2');
-        heading ? heading.after(row) : tool.prepend(row);
-      }
-    }
-
-    if (!text) {
-      const row = document.createElement('div');
-      row.className = 'security-control';
-      const label = document.createElement('label');
-      const labelText = document.createElement('span');
-      labelText.textContent = mode === 'citizen' ? 'Or paste Privacy Policy text' : 'Or paste Privacy Policy text';
-      text = document.createElement('textarea');
-      text.id = mode + 'Text'; text.className = 'input'; text.rows = mode === 'citizen' ? 9 : 11;
-      text.placeholder = mode === 'citizen' ? 'Paste the policy text here...' : 'Paste the full policy text here...';
-      label.append(labelText, text); row.appendChild(label);
-
-      const oldLabels = tool.querySelectorAll('label[data-i18n="pasteLabel"]');
-      if (oldLabels.length) oldLabels[0].replaceWith(row);
-      else {
-        const primary = [...tool.querySelectorAll('button')].find(b => b.dataset.i18n === (mode === 'citizen' ? 'explain' : 'runAssessment'));
-        primary ? primary.before(row) : tool.appendChild(row);
-      }
-    }
-
-    if (saved[mode].url && !url.value) url.value = saved[mode].url;
-    if (saved[mode].text && !text.value) text.value = saved[mode].text;
-    url.maxLength = MAX_URL; url.setAttribute('aria-label', 'Privacy Policy URL');
-    text.maxLength = MAX_POLICY; text.setAttribute('aria-label', 'Privacy Policy text');
+  function sanitizeText(value) {
+    return String(value || '').replace(/[\u0000-\u001F\u007F]/g, ' ').slice(0, MAX_POLICY);
   }
 
   function showError(mode, message) {
     const out = $(mode + 'Result');
     if (!out) return;
-    const box = document.createElement('div'); box.className = 'notice'; box.textContent = message; out.replaceChildren(box);
+    const box = document.createElement('div');
+    box.className = 'notice';
+    box.textContent = message;
+    out.replaceChildren(box);
+  }
+
+  /*
+   * Critical design rule: never put the controls inside a translatable label.
+   * app.js may replace the label's text. These controls live in their own
+   * container, so changing English/Hindi/Marathi can never remove them.
+   */
+  function ensureFields(mode) {
+    const tool = $('#' + mode + '-tool');
+    if (!tool) return false;
+    const card = tool.querySelector('.card');
+    if (!card) return false;
+
+    let wrap = card.querySelector('.ds-secure-inputs');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.className = 'ds-secure-inputs';
+      const result = $(mode + 'Result');
+      if (result) card.insertBefore(wrap, result);
+      else card.appendChild(wrap);
+    }
+
+    let url = $(mode + 'Url');
+    if (!url || !wrap.contains(url)) {
+      if (url) url.remove();
+      const label = document.createElement('label');
+      label.setAttribute('data-security-label', 'url');
+      label.textContent = t('urlLabel', 'Privacy Policy URL');
+      url = document.createElement('input');
+      url.type = 'url'; url.id = mode + 'Url'; url.className = 'input';
+      url.placeholder = 'https://example.com/privacy';
+      url.autocomplete = 'off'; url.inputMode = 'url'; url.maxLength = MAX_URL;
+      url.setAttribute('aria-label', t('urlLabel', 'Privacy Policy URL'));
+      label.appendChild(url); wrap.appendChild(label);
+    }
+
+    let text = $(mode + 'Text');
+    if (!text || !wrap.contains(text)) {
+      if (text) text.remove();
+      const label = document.createElement('label');
+      label.setAttribute('data-security-label', 'text');
+      label.textContent = t('pasteLabel', 'Or paste Privacy Policy text');
+      text = document.createElement('textarea');
+      text.id = mode + 'Text'; text.className = 'input';
+      text.rows = mode === 'citizen' ? 9 : 11; text.maxLength = MAX_POLICY;
+      text.placeholder = t(mode === 'citizen' ? 'pasteCitizen' : 'pasteCompany', 'Paste the Privacy Policy text here...');
+      text.setAttribute('aria-label', t('pasteLabel', 'Privacy Policy text'));
+      label.appendChild(text); wrap.appendChild(label);
+    }
+
+    if (saved[mode].url && !url.value) url.value = saved[mode].url;
+    if (saved[mode].text && !text.value) text.value = saved[mode].text;
+    return true;
+  }
+
+  function bind(mode) {
+    if (!ensureFields(mode)) return;
+    const url = $(mode + 'Url');
+    const text = $(mode + 'Text');
+    if (!url || !text) return;
+
+    if (!url.dataset.securityBound) {
+      url.dataset.securityBound = '1';
+      url.addEventListener('input', () => { url.value = url.value.replace(/[\u0000-\u001F\u007F]/g, '').slice(0, MAX_URL); });
+      url.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); read(mode); } });
+    }
+    if (!text.dataset.securityBound) {
+      text.dataset.securityBound = '1';
+      text.addEventListener('input', () => { text.value = sanitizeText(text.value); });
+      text.addEventListener('paste', () => setTimeout(() => { text.value = sanitizeText(text.value); }, 0));
+    }
+
+    const readButtons = [...document.querySelectorAll(`[data-i18n="readPolicy"]`)].filter(b => b.closest('#' + mode + '-tool'));
+    readButtons.forEach(b => {
+      if (b.dataset.securityBound) return;
+      b.dataset.securityBound = '1';
+      b.addEventListener('click', e => { e.preventDefault(); read(mode); });
+    });
+
+    const assessmentKey = mode === 'citizen' ? 'explain' : 'runAssessment';
+    [...document.querySelectorAll(`[data-i18n="${assessmentKey}"]`)].filter(b => b.closest('#' + mode + '-tool')).forEach(b => {
+      if (b.dataset.securityBound) return;
+      b.dataset.securityBound = '1';
+      b.addEventListener('click', e => { e.preventDefault(); assess(mode); });
+    });
   }
 
   function read(mode) {
-    ensureFields(mode);
+    if (!ensureFields(mode)) return showError(mode, 'The assessment form is unavailable. Please reload the page.');
     const input = $(mode + 'Url');
-    if (!input) return showError(mode, 'Privacy Policy URL field could not be created. Please reload the page.');
+    if (!input) return showError(mode, 'The URL field is unavailable. Please reload the page.');
     try {
       input.value = publicUrl(input.value);
-      if (typeof window.fetchPolicy !== 'function') throw new Error('Policy reader is not available. Please reload the page.');
+      saved[mode].url = input.value;
+      if (typeof window.fetchPolicy !== 'function') throw new Error('The policy reader is unavailable. Please reload the page.');
       window.fetchPolicy(mode);
     } catch (e) { showError(mode, e.message); }
   }
 
   function assess(mode) {
-    ensureFields(mode);
+    if (!ensureFields(mode)) return showError(mode, 'The assessment form is unavailable. Please reload the page.');
     const input = $(mode + 'Text');
-    if (!input) return showError(mode, 'Privacy Policy text field could not be created. Please reload the page.');
-    input.value = sanitizeText(input.value);
-    if (typeof window.assess !== 'function') return showError(mode, 'Assessment engine is not available. Please reload the page.');
+    if (!input) return showError(mode, 'The Privacy Policy text field is unavailable. Please reload the page.');
+    input.value = sanitizeText(input.value); saved[mode].text = input.value;
+    if (typeof window.assess !== 'function') return showError(mode, 'The assessment engine is unavailable. Please reload the page.');
     window.assess(mode);
   }
 
-  function bind(mode) {
-    ensureFields(mode);
-    const url = $(mode + 'Url');
-    const text = $(mode + 'Text');
-    if (url && !url.dataset.securityBound) {
-      url.dataset.securityBound = '1';
-      url.addEventListener('input', () => { if (url.value.length > MAX_URL) url.value = url.value.slice(0, MAX_URL); });
-      url.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); read(mode); } });
-    }
-    if (text && !text.dataset.securityBound) {
-      text.dataset.securityBound = '1';
-      text.addEventListener('input', () => { text.value = sanitizeText(text.value); });
-      text.addEventListener('paste', () => setTimeout(() => { text.value = sanitizeText(text.value); }, 0));
-    }
-    buttons('readPolicy').filter(b => b.closest('#' + mode + '-tool') && !b.dataset.securityBound).forEach(b => {
-      b.dataset.securityBound = '1'; b.addEventListener('click', e => { e.preventDefault(); read(mode); });
+  function bindNavigation() {
+    document.querySelectorAll('.backBtn').forEach(btn => {
+      if (!btn.dataset.securityBound) { btn.dataset.securityBound = '1'; btn.addEventListener('click', e => { e.preventDefault(); if (typeof window.showChoice === 'function') window.showChoice(); }); }
     });
-    buttons(mode === 'citizen' ? 'explain' : 'runAssessment').filter(b => b.closest('#' + mode + '-tool') && !b.dataset.securityBound).forEach(b => {
-      b.dataset.securityBound = '1'; b.addEventListener('click', e => { e.preventDefault(); assess(mode); });
+    document.querySelectorAll('[data-i18n="exportPdf"]').forEach(btn => {
+      if (!btn.dataset.securityBound) { btn.dataset.securityBound = '1'; btn.addEventListener('click', e => { e.preventDefault(); window.print(); }); }
     });
   }
 
-  function saveFields() {
+  function snapshot() {
     ['citizen', 'company'].forEach(mode => {
-      const u = $(mode + 'Url'), t = $(mode + 'Text');
+      const u = $(mode + 'Url'), text = $(mode + 'Text');
       if (u) saved[mode].url = u.value;
-      if (t) saved[mode].text = t.value;
+      if (text) saved[mode].text = text.value;
     });
   }
+
+  function bindAll() { bind('citizen'); bind('company'); bindNavigation(); }
 
   const language = $('language');
-  if (language) language.addEventListener('change', () => {
-    saveFields();
-    // Run after app.js's localization handler, then again shortly afterwards
-    // so cached/legacy DOM mutations cannot permanently remove the controls.
-    setTimeout(() => { bind('citizen'); bind('company'); }, 0);
-    setTimeout(() => { bind('citizen'); bind('company'); }, 50);
-  }, true);
+  if (language) language.addEventListener('change', () => { snapshot(); setTimeout(bindAll, 0); setTimeout(bindAll, 50); }, true);
 
-  bind('citizen'); bind('company');
+  bindAll();
 
-  // Defensive observer: if a translation update replaces a label/input, restore
-  // the controls without touching user-entered values.
+  /* Recover only the controls, never application content. */
   const observer = new MutationObserver(() => {
-    ensureFields('citizen'); ensureFields('company');
-    bind('citizen'); bind('company');
+    if (!document.querySelector('.ds-secure-inputs')) bindAll();
   });
-  observer.observe(document.body, { subtree: true, childList: true });
+  observer.observe(document.body, { childList: true, subtree: true });
 
-  buttons('citizenSelect').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('citizen'); }));
-  buttons('companySelect').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('company'); }));
-  buttons('heroCitizen').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('citizen'); }));
-  buttons('heroCompany').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('company'); }));
-  document.querySelectorAll('.backBtn').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); window.showChoice(); }));
-  buttons('exportPdf').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.print(); }));
+  /* Remove inline event attributes after listeners are attached. */
   document.querySelectorAll('[onclick]').forEach(el => el.removeAttribute('onclick'));
+
+  window.DataSaathiSecurity = Object.freeze({ sanitizeText, publicUrl });
 })();
