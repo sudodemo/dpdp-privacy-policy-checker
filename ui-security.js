@@ -5,128 +5,109 @@
   const MAX_POLICY = 1000000;
   const $ = id => document.getElementById(id);
   const buttons = (key, root = document) => [...root.querySelectorAll(`[data-i18n="${key}"]`)];
+  const saved = { citizen: { url: '', text: '' }, company: { url: '', text: '' } };
 
   const publicUrl = raw => {
     const value = String(raw || '').replace(/[\u0000-\u001F\u007F]/g, '').trim();
     if (!value || value.length > MAX_URL) throw new Error('Invalid or oversized URL.');
     let u;
     try { u = new URL(value); } catch (_) { throw new Error('Invalid URL.'); }
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('Only HTTP and HTTPS URLs are allowed.');
+    if (!['http:', 'https:'].includes(u.protocol)) throw new Error('Only HTTP and HTTPS URLs are allowed.');
     if (u.username || u.password) throw new Error('URLs containing embedded credentials are not allowed.');
-    if (u.port && u.port !== '80' && u.port !== '443') throw new Error('Only standard web ports are allowed.');
+    if (u.port && !['80', '443'].includes(u.port)) throw new Error('Only standard web ports are allowed.');
     const host = u.hostname.toLowerCase();
-    if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host.includes(':')) throw new Error('Local or internal hosts are not allowed.');
-    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) throw new Error('IP-address URLs are not supported; use the public website domain.');
+    if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) throw new Error('Local, internal or IP-address URLs are not supported.');
     return u.href;
   };
 
-  const sanitizeText = value => String(value || '')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
-    .slice(0, MAX_POLICY);
+  const sanitizeText = value => String(value || '').replace(/[\u0000-\u001F\u007F]/g, ' ').slice(0, MAX_POLICY);
 
-  // app.js previously localized the label element itself with innerHTML. The
-  // labels contain the input/textarea controls, so that operation removed the
-  // controls from the DOM. Restore them before binding events, and preserve
-  // their values across language changes.
-  const ensureFormControls = (mode, saved = {}) => {
+  function ensureFields(mode) {
     const tool = $('#' + mode + '-tool');
     if (!tool) return;
-    const labels = [...tool.querySelectorAll('label[data-i18n="urlLabel"],label[data-i18n="pasteLabel"]')];
-    const urlLabel = labels.find(x => x.dataset.i18n === 'urlLabel');
-    const textLabel = labels.find(x => x.dataset.i18n === 'pasteLabel');
-    if (urlLabel && !$(mode + 'Url')) {
-      const input = document.createElement('input');
-      input.id = mode + 'Url'; input.type = 'url'; input.className = 'input';
-      input.placeholder = 'https://example.com/privacy'; input.autocomplete = 'off';
-      urlLabel.appendChild(input);
+    let url = $(mode + 'Url');
+    let text = $(mode + 'Text');
+    const labels = [...tool.querySelectorAll('label')];
+    const urlLabel = labels[0];
+    const textLabel = labels[1];
+    if (!url && urlLabel) {
+      url = document.createElement('input');
+      url.type = 'url'; url.id = mode + 'Url'; url.className = 'input';
+      url.placeholder = 'https://example.com/privacy'; url.autocomplete = 'off';
+      urlLabel.appendChild(url);
     }
-    if (textLabel && !$(mode + 'Text')) {
-      const area = document.createElement('textarea');
-      area.id = mode + 'Text'; area.className = 'input'; area.rows = mode === 'citizen' ? 9 : 11;
-      area.placeholder = mode === 'citizen' ? 'Paste the policy text here...' : 'Paste the full policy text here...';
-      textLabel.appendChild(area);
+    if (!text && textLabel) {
+      text = document.createElement('textarea');
+      text.id = mode + 'Text'; text.className = 'input'; text.rows = mode === 'citizen' ? 9 : 11;
+      text.placeholder = mode === 'citizen' ? 'Paste the policy text here...' : 'Paste the full policy text here...';
+      textLabel.appendChild(text);
     }
-    if (saved.url !== undefined && $(mode + 'Url')) $(mode + 'Url').value = saved.url;
-    if (saved.text !== undefined && $(mode + 'Text')) $(mode + 'Text').value = saved.text;
-  };
-
-  const snapshot = mode => ({
-    url: $(mode + 'Url') ? $(mode + 'Url').value : '',
-    text: $(mode + 'Text') ? $(mode + 'Text').value : ''
-  });
-
-  const showInputError = (mode, message) => {
-    const out = $(mode + 'Result');
-    if (!out) return;
-    const box = document.createElement('div');
-    box.className = 'notice'; box.textContent = message; out.replaceChildren(box);
-  };
-
-  const safeRead = mode => {
-    ensureFormControls(mode);
-    const input = $(mode + 'Url');
-    try {
-      const normalized = publicUrl(input.value);
-      input.value = normalized;
-      window.fetchPolicy(mode);
-    } catch (e) { showInputError(mode, e.message); }
-  };
-
-  const safeAssess = mode => {
-    ensureFormControls(mode);
-    const input = $(mode + 'Text');
-    if (!input) return;
-    input.value = sanitizeText(input.value);
-    window.assess(mode);
-  };
-
-  ['citizen','company'].forEach(mode => ensureFormControls(mode));
-
-  // Capture the values before app.js handles the language change. app.js's
-  // legacy label localization may replace the controls; the second listener
-  // restores them without losing user-entered content.
-  const language = $('language');
-  if (language) {
-    language.addEventListener('change', () => {
-      const saved = {citizen: snapshot('citizen'), company: snapshot('company')};
-      setTimeout(() => {
-        ensureFormControls('citizen', saved.citizen);
-        ensureFormControls('company', saved.company);
-        bindInputs('citizen'); bindInputs('company');
-      }, 0);
-    }, true);
+    if (url && saved[mode].url && !url.value) url.value = saved[mode].url;
+    if (text && saved[mode].text && !text.value) text.value = saved[mode].text;
+    if (url) { url.maxLength = MAX_URL; url.setAttribute('aria-label', 'Privacy Policy URL'); }
+    if (text) { text.maxLength = MAX_POLICY; text.setAttribute('aria-label', 'Privacy Policy text'); }
   }
 
-  const bindInputs = mode => {
-    ensureFormControls(mode);
-    const url = $(mode + 'Url'); const text = $(mode + 'Text');
+  function showError(mode, message) {
+    const out = $(mode + 'Result');
+    if (!out) return;
+    const box = document.createElement('div'); box.className = 'notice'; box.textContent = message; out.replaceChildren(box);
+  }
+
+  function read(mode) {
+    ensureFields(mode);
+    const input = $(mode + 'Url');
+    if (!input) return showError(mode, 'Privacy Policy URL field is unavailable. Please refresh the page.');
+    try { input.value = publicUrl(input.value); window.fetchPolicy(mode); }
+    catch (e) { showError(mode, e.message); }
+  }
+
+  function assess(mode) {
+    ensureFields(mode);
+    const input = $(mode + 'Text');
+    if (!input) return showError(mode, 'Privacy Policy text field is unavailable. Please refresh the page.');
+    input.value = sanitizeText(input.value);
+    window.assess(mode);
+  }
+
+  function bind(mode) {
+    ensureFields(mode);
+    const url = $(mode + 'Url');
+    const text = $(mode + 'Text');
     if (url && !url.dataset.securityBound) {
-      url.dataset.securityBound = '1'; url.maxLength = MAX_URL;
+      url.dataset.securityBound = '1';
       url.addEventListener('input', () => { if (url.value.length > MAX_URL) url.value = url.value.slice(0, MAX_URL); });
-      url.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); safeRead(mode); } });
+      url.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); read(mode); } });
     }
     if (text && !text.dataset.securityBound) {
-      text.dataset.securityBound = '1'; text.maxLength = MAX_POLICY;
-      text.addEventListener('input', () => { if (text.value.length > MAX_POLICY) text.value = text.value.slice(0, MAX_POLICY); });
+      text.dataset.securityBound = '1';
+      text.addEventListener('input', () => { text.value = sanitizeText(text.value); });
       text.addEventListener('paste', () => setTimeout(() => { text.value = sanitizeText(text.value); }, 0));
     }
     buttons('readPolicy').filter(b => b.closest('#' + mode + '-tool') && !b.dataset.securityBound).forEach(b => {
-      b.dataset.securityBound = '1'; b.addEventListener('click', e => { e.preventDefault(); safeRead(mode); });
+      b.dataset.securityBound = '1'; b.addEventListener('click', e => { e.preventDefault(); read(mode); });
     });
     buttons(mode === 'citizen' ? 'explain' : 'runAssessment').filter(b => b.closest('#' + mode + '-tool') && !b.dataset.securityBound).forEach(b => {
-      b.dataset.securityBound = '1'; b.addEventListener('click', e => { e.preventDefault(); safeAssess(mode); });
+      b.dataset.securityBound = '1'; b.addEventListener('click', e => { e.preventDefault(); assess(mode); });
     });
-  };
+  }
 
-  bindInputs('citizen'); bindInputs('company');
+  const language = $('language');
+  if (language) language.addEventListener('change', () => {
+    ['citizen', 'company'].forEach(mode => {
+      const u = $(mode + 'Url'), t = $(mode + 'Text');
+      saved[mode].url = u ? u.value : saved[mode].url;
+      saved[mode].text = t ? t.value : saved[mode].text;
+    });
+    setTimeout(() => { bind('citizen'); bind('company'); }, 0);
+  }, true);
+
+  bind('citizen'); bind('company');
   buttons('citizenSelect').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('citizen'); }));
   buttons('companySelect').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('company'); }));
   buttons('heroCitizen').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('citizen'); }));
   buttons('heroCompany').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('company'); }));
   document.querySelectorAll('.backBtn').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); window.showChoice(); }));
   buttons('exportPdf').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.print(); }));
-
-  // Remove legacy inline event attributes. CSP already blocks them; removing
-  // them also keeps the DOM free of inline JavaScript handlers.
   document.querySelectorAll('[onclick]').forEach(el => el.removeAttribute('onclick'));
 })();
