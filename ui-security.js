@@ -22,30 +22,58 @@
 
   const sanitizeText = value => String(value || '').replace(/[\u0000-\u001F\u007F]/g, ' ').slice(0, MAX_POLICY);
 
+  // The localization code can replace label contents. Inputs must never be
+  // children of a node whose innerHTML is translated. Keep the controls in
+  // dedicated wrappers and recreate them if an older cached script removes them.
   function ensureFields(mode) {
     const tool = $('#' + mode + '-tool');
     if (!tool) return;
+
     let url = $(mode + 'Url');
     let text = $(mode + 'Text');
-    const labels = [...tool.querySelectorAll('label')];
-    const urlLabel = labels[0];
-    const textLabel = labels[1];
-    if (!url && urlLabel) {
+
+    if (!url) {
+      const row = document.createElement('div');
+      row.className = 'security-control';
+      const label = document.createElement('label');
+      const labelText = document.createElement('span');
+      labelText.textContent = mode === 'citizen' ? 'Privacy Policy URL' : 'Privacy Policy URL';
       url = document.createElement('input');
-      url.type = 'url'; url.id = mode + 'Url'; url.className = 'input';
+      url.id = mode + 'Url'; url.type = 'url'; url.className = 'input';
       url.placeholder = 'https://example.com/privacy'; url.autocomplete = 'off';
-      urlLabel.appendChild(url);
+      label.append(labelText, url); row.appendChild(label);
+
+      const oldLabels = tool.querySelectorAll('label[data-i18n="urlLabel"]');
+      if (oldLabels.length) oldLabels[0].replaceWith(row);
+      else {
+        const heading = tool.querySelector('h2');
+        heading ? heading.after(row) : tool.prepend(row);
+      }
     }
-    if (!text && textLabel) {
+
+    if (!text) {
+      const row = document.createElement('div');
+      row.className = 'security-control';
+      const label = document.createElement('label');
+      const labelText = document.createElement('span');
+      labelText.textContent = mode === 'citizen' ? 'Or paste Privacy Policy text' : 'Or paste Privacy Policy text';
       text = document.createElement('textarea');
       text.id = mode + 'Text'; text.className = 'input'; text.rows = mode === 'citizen' ? 9 : 11;
       text.placeholder = mode === 'citizen' ? 'Paste the policy text here...' : 'Paste the full policy text here...';
-      textLabel.appendChild(text);
+      label.append(labelText, text); row.appendChild(label);
+
+      const oldLabels = tool.querySelectorAll('label[data-i18n="pasteLabel"]');
+      if (oldLabels.length) oldLabels[0].replaceWith(row);
+      else {
+        const primary = [...tool.querySelectorAll('button')].find(b => b.dataset.i18n === (mode === 'citizen' ? 'explain' : 'runAssessment'));
+        primary ? primary.before(row) : tool.appendChild(row);
+      }
     }
-    if (url && saved[mode].url && !url.value) url.value = saved[mode].url;
-    if (text && saved[mode].text && !text.value) text.value = saved[mode].text;
-    if (url) { url.maxLength = MAX_URL; url.setAttribute('aria-label', 'Privacy Policy URL'); }
-    if (text) { text.maxLength = MAX_POLICY; text.setAttribute('aria-label', 'Privacy Policy text'); }
+
+    if (saved[mode].url && !url.value) url.value = saved[mode].url;
+    if (saved[mode].text && !text.value) text.value = saved[mode].text;
+    url.maxLength = MAX_URL; url.setAttribute('aria-label', 'Privacy Policy URL');
+    text.maxLength = MAX_POLICY; text.setAttribute('aria-label', 'Privacy Policy text');
   }
 
   function showError(mode, message) {
@@ -57,16 +85,20 @@
   function read(mode) {
     ensureFields(mode);
     const input = $(mode + 'Url');
-    if (!input) return showError(mode, 'Privacy Policy URL field is unavailable. Please refresh the page.');
-    try { input.value = publicUrl(input.value); window.fetchPolicy(mode); }
-    catch (e) { showError(mode, e.message); }
+    if (!input) return showError(mode, 'Privacy Policy URL field could not be created. Please reload the page.');
+    try {
+      input.value = publicUrl(input.value);
+      if (typeof window.fetchPolicy !== 'function') throw new Error('Policy reader is not available. Please reload the page.');
+      window.fetchPolicy(mode);
+    } catch (e) { showError(mode, e.message); }
   }
 
   function assess(mode) {
     ensureFields(mode);
     const input = $(mode + 'Text');
-    if (!input) return showError(mode, 'Privacy Policy text field is unavailable. Please refresh the page.');
+    if (!input) return showError(mode, 'Privacy Policy text field could not be created. Please reload the page.');
     input.value = sanitizeText(input.value);
+    if (typeof window.assess !== 'function') return showError(mode, 'Assessment engine is not available. Please reload the page.');
     window.assess(mode);
   }
 
@@ -92,17 +124,33 @@
     });
   }
 
-  const language = $('language');
-  if (language) language.addEventListener('change', () => {
+  function saveFields() {
     ['citizen', 'company'].forEach(mode => {
       const u = $(mode + 'Url'), t = $(mode + 'Text');
-      saved[mode].url = u ? u.value : saved[mode].url;
-      saved[mode].text = t ? t.value : saved[mode].text;
+      if (u) saved[mode].url = u.value;
+      if (t) saved[mode].text = t.value;
     });
+  }
+
+  const language = $('language');
+  if (language) language.addEventListener('change', () => {
+    saveFields();
+    // Run after app.js's localization handler, then again shortly afterwards
+    // so cached/legacy DOM mutations cannot permanently remove the controls.
     setTimeout(() => { bind('citizen'); bind('company'); }, 0);
+    setTimeout(() => { bind('citizen'); bind('company'); }, 50);
   }, true);
 
   bind('citizen'); bind('company');
+
+  // Defensive observer: if a translation update replaces a label/input, restore
+  // the controls without touching user-entered values.
+  const observer = new MutationObserver(() => {
+    ensureFields('citizen'); ensureFields('company');
+    bind('citizen'); bind('company');
+  });
+  observer.observe(document.body, { subtree: true, childList: true });
+
   buttons('citizenSelect').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('citizen'); }));
   buttons('companySelect').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('company'); }));
   buttons('heroCitizen').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('citizen'); }));
