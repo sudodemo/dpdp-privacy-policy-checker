@@ -887,6 +887,58 @@ if (heroCompany) {
 
 }
 
+document.addEventListener("DOMContentLoaded", function () {
+    console.log("DataSaathi app.js loaded");
+
+    // Citizen buttons
+    const citizenReadPolicy = document.getElementById("citizenReadPolicy");
+    const citizenAssess = document.getElementById("citizenAssess");
+
+    if (citizenReadPolicy) {
+        citizenReadPolicy.addEventListener("click", function () {
+            fetchPolicy("citizen");
+        });
+    }
+
+    if (citizenAssess) {
+        citizenAssess.addEventListener("click", function () {
+            assess("citizen");
+        });
+    }
+
+    // Company buttons
+    const companyReadPolicy = document.getElementById("companyReadPolicy");
+    const companyAssess = document.getElementById("companyAssess");
+
+    if (companyReadPolicy) {
+        companyReadPolicy.addEventListener("click", function () {
+            fetchPolicy("company");
+        });
+    }
+
+    if (companyAssess) {
+        companyAssess.addEventListener("click", function () {
+            assess("company");
+        });
+    }
+
+    // Export PDF
+    const exportPdf = document.getElementById("exportPdf");
+
+    if (exportPdf) {
+        exportPdf.addEventListener("click", function () {
+            window.print();
+        });
+    }
+
+    // Back buttons
+    document.querySelectorAll(".backBtn").forEach(function (button) {
+        button.addEventListener("click", function () {
+            showChoice();
+        });
+    });
+});
+
 
 /* ---------- Start application ---------- */
 
