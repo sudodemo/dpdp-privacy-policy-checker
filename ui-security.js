@@ -74,4 +74,8 @@
   buttons('heroCompany').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('company'); }));
   document.querySelectorAll('.backBtn').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); window.showChoice(); }));
   buttons('exportPdf').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.print(); }));
+
+  // Remove legacy inline event attributes. The CSP already blocks them; this also
+  // keeps the DOM free of inline JavaScript and leaves only external handlers.
+  document.querySelectorAll('[onclick]').forEach(el => el.removeAttribute('onclick'));
 })();
