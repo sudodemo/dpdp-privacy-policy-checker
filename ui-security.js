@@ -4,6 +4,7 @@
   const MAX_URL = 2048;
   const MAX_POLICY = 1000000;
   const $ = id => document.getElementById(id);
+  const buttons = (key, root = document) => [...root.querySelectorAll(`[data-i18n="${key}"]`)];
 
   const publicUrl = raw => {
     const value = String(raw || '').replace(/[\u0000-\u001F\u007F]/g, '').trim();
@@ -22,11 +23,6 @@
   const sanitizeText = value => String(value || '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
     .slice(0, MAX_POLICY);
-
-  const bind = (id, event, handler) => {
-    const el = $(id);
-    if (el) el.addEventListener(event, handler);
-  };
 
   const showInputError = (mode, message) => {
     const out = $(mode + 'Result');
@@ -68,14 +64,14 @@
       text.addEventListener('input', () => { if (text.value.length > MAX_POLICY) text.value = text.value.slice(0, MAX_POLICY); });
       text.addEventListener('paste', () => setTimeout(() => { text.value = sanitizeText(text.value); }, 0));
     }
-    bind(mode + 'Read', 'click', () => safeRead(mode));
-    bind(mode + 'Assess', 'click', () => safeAssess(mode));
+    buttons('readPolicy').filter(b => b.closest('#' + mode + '-tool')).forEach(b => b.addEventListener('click', e => { e.preventDefault(); safeRead(mode); }));
+    buttons(mode === 'citizen' ? 'explain' : 'runAssessment').filter(b => b.closest('#' + mode + '-tool')).forEach(b => b.addEventListener('click', e => { e.preventDefault(); safeAssess(mode); }));
   });
 
-  bind('citizenSelect', 'click', e => { e.preventDefault(); window.showMode('citizen'); });
-  bind('companySelect', 'click', e => { e.preventDefault(); window.showMode('company'); });
-  bind('heroCitizen', 'click', e => { e.preventDefault(); window.showMode('citizen'); });
-  bind('heroCompany', 'click', e => { e.preventDefault(); window.showMode('company'); });
+  buttons('citizenSelect').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('citizen'); }));
+  buttons('companySelect').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('company'); }));
+  buttons('heroCitizen').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('citizen'); }));
+  buttons('heroCompany').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.showMode('company'); }));
   document.querySelectorAll('.backBtn').forEach(btn => btn.addEventListener('click', e => { e.preventDefault(); window.showChoice(); }));
-  bind('companyPdf', 'click', () => window.print());
+  buttons('exportPdf').forEach(b => b.addEventListener('click', e => { e.preventDefault(); window.print(); }));
 })();
